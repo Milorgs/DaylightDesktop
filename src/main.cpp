@@ -27,7 +27,7 @@ static const WCHAR *UI_CLASS = L"Milorgs.DaylightDesktop.Settings";
 static const WCHAR *WORKER_CLASS = L"Milorgs.DaylightDesktop.Worker";
 static const WCHAR *RUN_KEY = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 static const UINT RELOAD = WM_APP+1;
-enum { DAY=101, NIGHT, DAY_PICK, NIGHT_PICK, MODE, RISE, SET, LAT, LON, ENABLE, STARTUP, SAVE, HIDE, MORE, BACK, PROJECT, MODE_TIME, MODE_SOLAR, FOLDER_PICK, AUTO_LOCATION, AUTO_POSITION, POSITION_AUTO, POSITION_CUSTOM, ID_UI_CHINESE, ID_UI_ENGLISH, THEME_SYSTEM, THEME_LIGHT, THEME_DARK, IMPORT_THEME, PREVIEW_THEME, LIBRARY_PREV, LIBRARY_NEXT, PHASE_PREV, PHASE_NEXT, LIBRARY_TILE=140 };
+enum { DAY=101, NIGHT, DAY_PICK, NIGHT_PICK, MODE, RISE, SET, LAT, LON, ENABLE, STARTUP, SAVE, HIDE, MORE, BACK, PROJECT, MODE_TIME, MODE_SOLAR, FOLDER_PICK, AUTO_LOCATION, AUTO_POSITION, POSITION_AUTO, POSITION_CUSTOM, ID_UI_CHINESE, ID_UI_ENGLISH, THEME_SYSTEM, THEME_LIGHT, THEME_DARK, IMPORT_THEME, PREVIEW_THEME, LIBRARY_PREV, LIBRARY_NEXT, PHASE_PREV, PHASE_NEXT, LIBRARY_TILE=140, REFRESH_WALLPAPER=146 };
 struct Settings { WCHAR day[MAX_PATH]={}, night[MAX_PATH]={}, folder[MAX_PATH]={},themeName[128]={},placeName[160]={}; int rise=420, set=1140,appearance=0; double lat=0, lon=0,manualLat=0,manualLon=0; bool solar=true, enabled=false,autoPosition=true,located=false,manualKnown=false,chinese=PRIMARYLANGID(GetUserDefaultUILanguage())==LANG_CHINESE; };
 static WCHAR configPath[MAX_PATH], exePath[MAX_PATH], lastWallpaper[MAX_PATH];
 static HWND window;
@@ -45,6 +45,7 @@ static HBRUSH background, surface;
 static bool dark, worker, dryRun, enabledChoice, startupChoice;
 static bool chinese=true,importing,mica,compositedPaint,highContrast;
 static bool lightPreview;
+static bool refreshingWallpaper;
 static int appearance;
 static HTHEME textTheme;
 static COLORREF baseColor,cardColor,borderColor,mutedColor,accentColor;
@@ -58,6 +59,7 @@ extern "C" void smoothCircle(HDC,int,int,int,COLORREF);
 extern "C" void smoothArrow(HDC,int,int,int,COLORREF,int);
 static const WCHAR *tr(const WCHAR *cn,const WCHAR *en) { return chinese?cn:en; }
 static int px(int n) { return MulDiv(n,dpi,96); }
+#include "geolocation_process.h"
 static void resizePage()
 {
     if (!window||worker) return;
@@ -168,6 +170,28 @@ static bool physicalWallpaperPath(const WCHAR *file,WCHAR *path,DWORD capacity)
     else if (!_wcsnicmp(path,L"\\\\?\\",4)) memmove(path,path+4,(wcslen(path+4)+1)*sizeof(WCHAR));
     return true;
 }
+static HRESULT applyWallpaperFile(const WCHAR *file,bool force=false)
+{
+    WCHAR physical[4096]; HRESULT result=HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+        if (physicalWallpaperPath(file,physical,4096)) {
+            HRESULT apartment=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
+            result=apartment;
+            if (SUCCEEDED(apartment)) {
+                IDesktopWallpaper *desktop=nullptr;
+                result=CoCreateInstance(CLSID_DesktopWallpaper,nullptr,CLSCTX_ALL,IID_IDesktopWallpaper,(void**)&desktop);
+                if (SUCCEEDED(result)) {
+                    PWSTR currentWallpaper=nullptr;
+                    HRESULT currentResult=desktop->GetWallpaper(nullptr,&currentWallpaper);
+                    if (!force&&currentResult==S_OK&&currentWallpaper&&!lstrcmpiW(currentWallpaper,physical)) result=S_OK;
+                    else result=desktop->SetWallpaper(nullptr,physical);
+                    if (currentWallpaper) CoTaskMemFree(currentWallpaper);
+                    desktop->Release();
+                }
+                CoUninitialize();
+            }
+        }
+    return result;
+}
 static Playback playbackAt(const Settings &s,const Theme &theme)
 {
     SYSTEMTIME now; Plan p=currentPlan(s,&now);
@@ -203,24 +227,7 @@ static void scheduleWorker(HWND h)
     Playback playback=playbackAt(s,theme);
     const WCHAR *file=theme.valid?theme.frames.files[playback.index]:L"";
     if (!dryRun && exists(file) && wcscmp(file,lastWallpaper)) {
-        WCHAR physical[4096]; HRESULT result=HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
-        if (physicalWallpaperPath(file,physical,4096)) {
-            HRESULT apartment=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
-            result=apartment;
-            if (SUCCEEDED(apartment)) {
-                IDesktopWallpaper *desktop=nullptr;
-                result=CoCreateInstance(CLSID_DesktopWallpaper,nullptr,CLSCTX_ALL,IID_IDesktopWallpaper,(void**)&desktop);
-                if (SUCCEEDED(result)) {
-                    PWSTR currentWallpaper=nullptr;
-                    HRESULT currentResult=desktop->GetWallpaper(nullptr,&currentWallpaper);
-                    if (currentResult==S_OK&&currentWallpaper&&!lstrcmpiW(currentWallpaper,physical)) result=S_OK;
-                    else result=desktop->SetWallpaper(nullptr,physical);
-                    if (currentWallpaper) CoTaskMemFree(currentWallpaper);
-                    desktop->Release();
-                }
-                CoUninitialize();
-            }
-        }
+        HRESULT result=applyWallpaperFile(file);
         if (SUCCEEDED(result)) lstrcpynW(lastWallpaper,file,MAX_PATH);
         else {
             ConfigLock lock;
@@ -332,10 +339,9 @@ static HWND ctrl(const WCHAR *kind,const WCHAR *text,DWORD style,int x,int y,int
     }
     return c;
 }
-static void label(HDC dc,const WCHAR *text,int x,int y,int w,int h,HFONT f,COLORREF color)
+static void label(HDC dc,const WCHAR *text,int x,int y,int w,int h,HFONT f,COLORREF color,DWORD format=DT_LEFT|DT_WORDBREAK|DT_NOPREFIX)
 {
     RECT r={px(x),px(y),px(x+w),px(y+h)}; SelectObject(dc,f); SetBkMode(dc,TRANSPARENT); SetTextColor(dc,color);
-    DWORD format=DT_LEFT|DT_WORDBREAK|DT_NOPREFIX;
     if (compositedPaint&&textTheme) {
         DTTOPTS options={}; options.dwSize=sizeof(options); options.dwFlags=DTT_COMPOSITED|DTT_TEXTCOLOR; options.crText=color;
         if (SUCCEEDED(DrawThemeTextEx(textTheme,dc,0,0,text,-1,format,&r,&options))) return;
@@ -346,6 +352,31 @@ static void applyUI(bool switchOnly=false);
 static void syncLocationMonitoring(HWND target);
 #include "catalog.h"
 static void identifyLocation(HWND target=nullptr);
+struct RefreshJob { HWND target; WCHAR file[MAX_PATH]; bool dry; HRESULT result; };
+static DWORD WINAPI refreshWallpaperThread(void *context)
+{
+    RefreshJob *job=(RefreshJob*)context;
+    job->result=job->dry?S_OK:applyWallpaperFile(job->file,true);
+    if (!PostMessageW(job->target,WM_APP+15,0,(LPARAM)job)) free(job);
+    return 0;
+}
+static void refreshWallpaperNow()
+{
+    if (!chosenTheme.valid||refreshingWallpaper) return;
+    Settings settings=load(configPath);
+    if (settings.solar&&!settings.located) {
+        lstrcpyW(status,tr(L"位置尚不可用，请先设置位置或固定时间。",L"Set a location or choose Fixed time first."));
+        RECT helper={px(28),px(276),px(432),px(302)}; InvalidateRect(window,&helper,FALSE); return;
+    }
+    Playback playback=playbackAt(settings,chosenTheme);
+    RefreshJob *job=(RefreshJob*)calloc(1,sizeof(RefreshJob)); if (!job) return;
+    job->target=window; job->dry=dryRun; lstrcpynW(job->file,chosenTheme.frames.files[playback.index],MAX_PATH);
+    refreshingWallpaper=true;
+    SetDlgItemTextW(window,REFRESH_WALLPAPER,tr(L"刷新中…",L"Refreshing…"));
+    HANDLE thread=CreateThread(nullptr,0,refreshWallpaperThread,job,0,nullptr);
+    if (thread) CloseHandle(thread);
+    else { free(job); refreshingWallpaper=false; SetDlgItemTextW(window,REFRESH_WALLPAPER,tr(L"刷新壁纸",L"Refresh wallpaper")); }
+}
 static void migrateRememberedTheme()
 {
     if (importing||!chosenTheme.valid) return;
@@ -412,7 +443,7 @@ static void identifyLocation(HWND target)
         free(request); locating=false; EnableWindow(GetDlgItem(window,AUTO_LOCATION),TRUE); SetDlgItemTextW(window,AUTO_LOCATION,tr(L"刷新",L"Refresh"));
         lstrcpyW(status,tr(L"Windows 定位权限不可用，可选择自定义坐标。",L"Windows location is unavailable. Choose Coordinates to set a location.")); InvalidateRect(window,nullptr,FALSE); return;
     }
-    HANDLE thread=CreateThread(nullptr,0,locateThread,request,0,nullptr);
+    HANDLE thread=CreateThread(nullptr,0,worker?locationProcessThread:locateThread,request,0,nullptr);
     if (thread) CloseHandle(thread);
     else { if (request->access) request->access->Release(); free(request); locating=false; EnableWindow(GetDlgItem(window,AUTO_LOCATION),TRUE); SetDlgItemTextW(window,AUTO_LOCATION,tr(L"刷新",L"Refresh")); }
 }
@@ -423,7 +454,7 @@ static void showPage(int nextPage)
     if (visible) SendMessageW(window,WM_SETREDRAW,FALSE,0);
     page=nextPage; morePage=page!=0;
     for (HWND child=GetWindow(window,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) ShowWindow(child,SW_HIDE);
-    const int main[]={FOLDER_PICK,PREVIEW_THEME,MODE_TIME,MODE_SOLAR,ENABLE,MORE,POSITION_CUSTOM};
+    const int main[]={FOLDER_PICK,PREVIEW_THEME,REFRESH_WALLPAPER,MODE_TIME,MODE_SOLAR,ENABLE,MORE,POSITION_CUSTOM};
     const int extra[]={STARTUP,PROJECT,ID_UI_CHINESE,ID_UI_ENGLISH,THEME_SYSTEM,THEME_LIGHT,THEME_DARK};
     if (page==0) { for (int id:main) ShowWindow(GetDlgItem(window,id),SW_SHOW); scheduleControls(); }
     if (page==1) for (int id:extra) ShowWindow(GetDlgItem(window,id),SW_SHOW);
@@ -433,6 +464,7 @@ static void showPage(int nextPage)
     if (page!=2) clearLibraryImages();
     if (page!=3&&phaseImage) { DeleteObject(phaseImage); phaseImage=nullptr; }
     EnableWindow(GetDlgItem(window,PREVIEW_THEME),chosenTheme.valid);
+    EnableWindow(GetDlgItem(window,REFRESH_WALLPAPER),chosenTheme.valid);
     resizePage();
     if (visible) SendMessageW(window,WM_SETREDRAW,TRUE,0);
     SetFocus(GetDlgItem(window,page?BACK:FOLDER_PICK)); RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN);
@@ -483,13 +515,14 @@ static void translateControls()
 {
     struct Caption { int id; const WCHAR *cn,*en; };
     const Caption controls[]={
-        {MORE,L"更多",L"More"},{BACK,L"返回",L"Back"},{FOLDER_PICK,L"选择主题",L"Themes"},{PREVIEW_THEME,L"分时预览",L"Preview"},{IMPORT_THEME,L"导入主题文件夹…",L"Import theme folder…"},
+        {MORE,L"更多",L"More"},{BACK,L"返回",L"Back"},{FOLDER_PICK,L"选择主题",L"Themes"},{PREVIEW_THEME,L"分时预览",L"Preview"},{REFRESH_WALLPAPER,L"刷新壁纸",L"Refresh wallpaper"},{IMPORT_THEME,L"导入主题文件夹…",L"Import theme folder…"},
         {MODE_TIME,L"固定时间",L"Fixed time"},{MODE_SOLAR,L"自动位置",L"Automatic"},{POSITION_CUSTOM,L"自定义坐标",L"Coordinates"},
         {ENABLE,L"自动切换",L"Automatic switching"},{STARTUP,L"开机自启动",L"Run at sign-in"},{PROJECT,L"GitHub 项目",L"GitHub project"},
         {AUTO_LOCATION,L"刷新",L"Refresh"},{THEME_SYSTEM,L"跟随系统",L"System"},{THEME_LIGHT,L"浅色",L"Light"},{THEME_DARK,L"深色",L"Dark"}
     };
     for (const Caption &caption:controls) SetDlgItemTextW(window,caption.id,tr(caption.cn,caption.en));
     if (locating) SetDlgItemTextW(window,AUTO_LOCATION,tr(L"正在识别…",L"Locating…"));
+    if (refreshingWallpaper) SetDlgItemTextW(window,REFRESH_WALLPAPER,tr(L"刷新中…",L"Refreshing…"));
     if (importing) SetDlgItemTextW(window,FOLDER_PICK,tr(L"正在导入…",L"Importing…"));
     if (status[0]) {
         const Caption notices[]={
@@ -617,7 +650,7 @@ static void buttonContent(DRAWITEMSTRUCT *d)
         SelectObject(d->hDC,font); SetBkMode(d->hDC,TRANSPARENT); SetTextColor(d->hDC,ink()); DrawTextW(d->hDC,title,-1,&text,DT_LEFT|DT_SINGLELINE|DT_END_ELLIPSIS);
         return;
     }
-            bool card=d->CtlID==ENABLE||d->CtlID==FOLDER_PICK||d->CtlID==PREVIEW_THEME||d->CtlID==MODE_TIME||d->CtlID==MODE_SOLAR||d->CtlID==POSITION_CUSTOM||d->CtlID==STARTUP||d->CtlID==AUTO_POSITION||d->CtlID==AUTO_LOCATION||d->CtlID==ID_UI_CHINESE||d->CtlID==ID_UI_ENGLISH||(d->CtlID>=THEME_SYSTEM&&d->CtlID<=THEME_DARK);
+            bool card=d->CtlID==ENABLE||d->CtlID==FOLDER_PICK||d->CtlID==PREVIEW_THEME||d->CtlID==REFRESH_WALLPAPER||d->CtlID==MODE_TIME||d->CtlID==MODE_SOLAR||d->CtlID==POSITION_CUSTOM||d->CtlID==STARTUP||d->CtlID==AUTO_POSITION||d->CtlID==AUTO_LOCATION||d->CtlID==ID_UI_CHINESE||d->CtlID==ID_UI_ENGLISH||(d->CtlID>=THEME_SYSTEM&&d->CtlID<=THEME_DARK);
             FillRect(d->hDC,&r,card?surface:mica?(HBRUSH)GetStockObject(BLACK_BRUSH):background);
             if (buttonPaintBuffer&&(card||!mica)) BufferedPaintSetAlpha(buttonPaintBuffer,nullptr,255);
             if (d->CtlID==ENABLE || d->CtlID==STARTUP || d->CtlID==AUTO_POSITION) {
@@ -712,6 +745,7 @@ static LRESULT CALLBACK procedure(HWND h,UINT m,WPARAM w,LPARAM l)
             ctrl(L"BUTTON",tr(L"浅色",L"Light"),BS_OWNERDRAW|WS_TABSTOP,166,236,128,30,THEME_LIGHT);
             ctrl(L"BUTTON",tr(L"深色",L"Dark"),BS_OWNERDRAW|WS_TABSTOP,304,236,128,30,THEME_DARK);
             ctrl(L"BUTTON",tr(L"分时预览",L"Preview"),BS_OWNERDRAW|WS_TABSTOP,300,110,132,30,PREVIEW_THEME);
+            ctrl(L"BUTTON",tr(L"刷新壁纸",L"Refresh wallpaper"),BS_OWNERDRAW|WS_TABSTOP,300,76,132,26,REFRESH_WALLPAPER);
             ctrl(L"BUTTON",tr(L"导入主题文件夹…",L"Import theme folder…"),BS_OWNERDRAW|WS_TABSTOP,16,58,428,30,IMPORT_THEME);
             ctrl(L"BUTTON",L"",BS_OWNERDRAW|WS_TABSTOP,16,426,72,30,LIBRARY_PREV);
             ctrl(L"BUTTON",L"",BS_OWNERDRAW|WS_TABSTOP,372,426,72,30,LIBRARY_NEXT);
@@ -733,6 +767,7 @@ static LRESULT CALLBACK procedure(HWND h,UINT m,WPARAM w,LPARAM l)
             case FOLDER_PICK: showPage(2); break;
             case IMPORT_THEME: if (!importing) chooseFolder(); break;
             case PREVIEW_THEME: if (chosenTheme.valid) showPage(3); break;
+            case REFRESH_WALLPAPER: refreshWallpaperNow(); break;
             case LIBRARY_PREV: case LIBRARY_NEXT: libraryPage+=LOWORD(w)==LIBRARY_PREV?-1:1; refreshLibrary(false); InvalidateRect(h,nullptr,FALSE); break;
             case PHASE_PREV: case PHASE_NEXT: if (!phases.empty()) { int count=(int)phases.size(); phasePosition=(phasePosition+(LOWORD(w)==PHASE_PREV?-1:1)+count)%count; updatePhaseImage(); } break;
             case AUTO_LOCATION: identifyLocation(); break;
@@ -796,6 +831,19 @@ static LRESULT CALLBACK procedure(HWND h,UINT m,WPARAM w,LPARAM l)
             lstrcpyW(status,tr(L"壁纸设置失败，已暂停自动切换。",L"Wallpaper could not be applied. Switching paused."));
             redrawSchedule(); return 0;
         }
+        if (m==WM_APP+15) {
+            RefreshJob *job=(RefreshJob*)l; refreshingWallpaper=false;
+            SetDlgItemTextW(h,REFRESH_WALLPAPER,tr(L"刷新壁纸",L"Refresh wallpaper"));
+            bool hadStatus=status[0]!=0;
+            if (job&&SUCCEEDED(job->result)) { status[0]=0; previewIndex=-1; updateCurrentPreview(); WritePrivateProfileStringW(L"Status",L"LastRefreshError",nullptr,configPath); }
+            else {
+                lstrcpyW(status,tr(L"壁纸刷新失败，原壁纸已保留。",L"Refresh failed. The previous wallpaper was retained."));
+                WCHAR code[16]; swprintf(code,16,L"%08lX",(unsigned long)(job?job->result:E_FAIL));
+                WritePrivateProfileStringW(L"Status",L"LastRefreshError",code,configPath);
+            }
+            if (hadStatus||status[0]) { RECT helper={px(28),px(276),px(432),px(302)}; InvalidateRect(h,&helper,FALSE); }
+            free(job); return 0;
+        }
         if (m==WM_POWERBROADCAST&&(w==PBT_APMRESUMEAUTOMATIC||w==PBT_APMRESUMESUSPEND)) { updateCurrentPreview(); automaticRefresh(h); return TRUE; }
         if (m==WM_TIMER) {
             if (w==7) { updateCurrentPreview(); return 0; }
@@ -839,11 +887,11 @@ static LRESULT CALLBACK procedure(HWND h,UINT m,WPARAM w,LPARAM l)
                 smoothRoundRect(dc,px(16),px(314),px(428),px(38),px(12),card,card,0);
                 label(dc,L"Daylight Desktop",16,12,380,30,heading,ink());
                 smoothRoundRect(dc,px(16),px(58),px(428),px(100),px(12),card,card,0);
-                label(dc,tr(L"壁纸主题",L"Wallpaper theme"),28,66,112,20,small,muted);
-                WCHAR theme[256];
-                if (chosenTheme.frames.count>=2) swprintf(theme,256,tr(L"%ls · %d 阶段",L"%ls · %d frames"),chosenTheme.title,chosenTheme.frames.count);
-                else lstrcpyW(theme,tr(L"未选择主题",L"No theme selected"));
-                label(dc,theme,152,76,280,22,font,ink());
+                WCHAR theme[128];
+                if (chosenTheme.valid) swprintf(theme,128,tr(L"壁纸主题 · %d 阶段",L"Theme · %d frames"),chosenTheme.frames.count);
+                else lstrcpyW(theme,tr(L"壁纸主题",L"Wallpaper theme"));
+                label(dc,theme,28,66,112,20,small,muted,DT_LEFT|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+                label(dc,chosenTheme.valid?chosenTheme.title:tr(L"未选择主题",L"No theme selected"),152,76,136,22,font,ink(),DT_LEFT|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
                 if (preview) {
                     HDC image=CreateCompatibleDC(dc); HGDIOBJ old=SelectObject(image,preview);
                     BLENDFUNCTION blend={AC_SRC_OVER,0,255,AC_SRC_ALPHA}; AlphaBlend(dc,px(28),px(88),px(104),px(60),image,0,0,px(104),px(60),blend);
@@ -990,6 +1038,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show)
     if (!GetModuleFileNameW(nullptr,exePath,MAX_PATH)||!GetEnvironmentVariableW(L"LOCALAPPDATA",configPath,MAX_PATH)) return 1;
     if (wcslen(configPath)+40>=MAX_PATH) return 1;
     lstrcatW(configPath,L"\\DaylightDesktop"); CreateDirectoryW(configPath,nullptr); lstrcatW(configPath,L"\\settings.ini");
+    if (!wcscmp(args,L"--location-helper")) return locationHelper(false);
+    if (!wcscmp(args,L"--location-helper-test")) return locationHelper(true);
+    if (!wcscmp(args,L"--test-location-process")) return locationProcessTest();
     if (!wcscmp(args,L"--self-test")) return selfTest();
     if (!wcscmp(args,L"--probe-desktop")) return probeDesktop();
     if (!wcscmp(args,L"--probe-location")) return probeLocation();

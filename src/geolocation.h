@@ -61,11 +61,9 @@ inline HRESULT createLocator(GeoLocator **locator)
     if (SUCCEEDED(result)) { result=instance->QueryInterface(GEO_LOCATOR_IID,(void**)locator); instance->Release(); }
     return result;
 }
-static DWORD WINAPI locateThread(void *context)
+static void locateOnce(LocationRequest *request,Located *value)
 {
-    LocationRequest *request=(LocationRequest*)context; HWND target=request->target; bool useChinese=request->chinese;
-    Located *value=(Located*)malloc(sizeof(Located));
-    if (!value) { if (request->access) request->access->Release(); free(request); PostMessageW(target,WM_APP+3,0,0); return 0; }
+    HWND target=request->target; bool useChinese=request->chinese;
     *value=Located{};
     HRESULT initialized=RoInitialize(RO_INIT_MULTITHREADED);
     bool allowed=true;
@@ -73,7 +71,7 @@ static DWORD WINAPI locateThread(void *context)
         GeoInfo *info=nullptr; HRESULT result=request->access->QueryInterface(GEO_INFO_IID,(void**)&info); int permission=0;
         if (SUCCEEDED(result)) {
             int state=0; ULONGLONG deadline=GetTickCount64()+20000;
-            while (SUCCEEDED(info->Status(&state))&&state==0&&GetTickCount64()<deadline&&IsWindow(target)) Sleep(200);
+            while (SUCCEEDED(info->Status(&state))&&state==0&&GetTickCount64()<deadline&&(!target||IsWindow(target))) Sleep(200);
             result=state==1?request->access->Results(&permission):E_ACCESSDENIED;
             if (state!=1) info->Cancel();
             info->Close(); info->Release();
@@ -91,7 +89,7 @@ static DWORD WINAPI locateThread(void *context)
                 GeoInfo *info=nullptr; value->result=operation->QueryInterface(GEO_INFO_IID,(void**)&info);
                 if (SUCCEEDED(value->result)) {
                     ULONGLONG deadline=GetTickCount64()+22000; int state=0;
-                    while (SUCCEEDED(info->Status(&state))&&state==0&&GetTickCount64()<deadline&&IsWindow(target)) Sleep(200);
+                    while (SUCCEEDED(info->Status(&state))&&state==0&&GetTickCount64()<deadline&&(!target||IsWindow(target))) Sleep(200);
                     if (state!=1) { info->Cancel(); value->result=E_FAIL; }
                     else {
                         GeoPosition *position=nullptr; value->result=operation->Results(&position);
@@ -114,6 +112,14 @@ static DWORD WINAPI locateThread(void *context)
         RoUninitialize();
     } else { value->result=SUCCEEDED(initialized)?E_ACCESSDENIED:initialized; if (SUCCEEDED(initialized)) RoUninitialize(); }
     if (SUCCEEDED(value->result)) reversePlace(value->latitude,value->longitude,value->name,useChinese);
+
+}
+static DWORD WINAPI locateThread(void *context)
+{
+    LocationRequest *request=(LocationRequest*)context; HWND target=request->target;
+    Located *value=(Located*)malloc(sizeof(Located));
+    if (!value) { if (request->access) request->access->Release(); free(request); PostMessageW(target,WM_APP+3,0,0); return 0; }
+    locateOnce(request,value);
     if (!PostMessageW(target,WM_APP+3,0,(LPARAM)value)) free(value);
     return 0;
 }

@@ -26,6 +26,8 @@ jobs:
         run: |
           $check = Start-Process "$PWD/dist/DaylightDesktop.exe" -ArgumentList '--self-test' -Wait -PassThru
           if ($check.ExitCode -ne 0) { throw "Self-test failed: $($check.ExitCode)" }
+          $location = Start-Process "$PWD/dist/DaylightDesktop.exe" -ArgumentList '--test-location-process' -Wait -PassThru
+          if ($location.ExitCode -ne 0) { throw "Location process test failed: $($location.ExitCode)" }
       - uses: actions/upload-artifact@v4
         with:
           name: DaylightDesktop-windows-x64

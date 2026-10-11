@@ -8,6 +8,7 @@ A small native Windows utility that advances through a sequence of wallpaper ima
 
 - Choose a WinDynamicDesktop theme folder containing `theme.json` and its referenced images. The app copies the required files into its own local theme library and remembers the selection.
 - Previously imported themes remain available in the theme library. Browse scheduled images in a loop in either direction without changing the desktop; the home thumbnail follows the current time.
+- Refresh wallpaper reapplies the frame for the current time and updates the thumbnail, including when automatic switching is off.
 - Read the theme's sunrise, day, sunset, and night image lists in their defined order. Fixed local times or approximate solar times set the pace.
 - Transition boundaries are calculated directly. The scheduler reuses theme metadata until the manifest changes; theme-library pagination avoids rescanning the library.
 - One timer for the next transition; recalculates after wake, time changes, and at midnight in solar mode.
@@ -46,7 +47,7 @@ Theme definitions use `imageFilename`, `dayImageList`, `nightImageList`, optiona
 
 This version uses time-varying static frames rather than video. Direct Apple HEIC import, theme downloads, per-frame solar-angle metadata, separate monitor schedules, and crossfade animation are not included yet. At polar latitudes, only the appropriate day or night list progresses over 24 hours. A missing or invalid theme leaves the current wallpaper in place. Archives must contain a flat `theme.json` and image files; nested paths and unrelated files are rejected.
 
-After applying a wallpaper on the development PC, the fixed-time background used about 12.9 MB of working-set memory and automatic location about 19.0 MB. No CPU-time increase was measured during the following 10-second idle samples. Settings use additional memory for previews and drawing buffers. These are local measurements, not a memory limit; usage varies by system, theme, and activity. Diagnostic mode `--measure` excludes wallpaper application and location requests.
+In a comparison on the development PC, the automatic-location background's idle working set fell from about 19.6 MB to 12.9 MB after the location task finished. Neither version showed CPU-time growth during the 10-second idle samples. Location work temporarily runs in a second process from the same EXE; the sampled combined peak was about 25.7 MB, and the helper then exited. City-name caching, refresh intervals, and fallback behavior are retained. Settings use additional memory for previews and drawing buffers. These are local measurements, not memory limits; usage varies by system, theme, and activity. Diagnostic mode `--measure` excludes wallpaper application and location requests.
 
 ## 中文说明
 
@@ -58,6 +59,7 @@ After applying a wallpaper on the development PC, the fixed-time background used
 
 - 选择包含 `theme.json` 和完整图片的 WinDynamicDesktop 主题文件夹，程序自动复制到本地主题库并记住选择。
 - 已导入主题保留在主题库，可直接重新选择。分时预览可双向循环浏览各时间段图片，不更改桌面；主页缩略图随当前时间更新。
+- “刷新壁纸”按当前时间重新应用图片并更新缩略图，关闭自动切换时也可单次刷新。
 - 根据主题定义的日出、白天、日落、夜间图片列表确定顺序，按固定时间或当地太阳时间调整节奏。
 - 直接计算下一次切换节点；主题配置未变化时复用缓存，主题库翻页不重新扫描整个文件夹。固定时间和自定义坐标模式不监听网络变化，也不定时检查位置。
 - 后台只等待下一次切换事件，唤醒或系统时间改变时重新计算；日出日落模式每天重新计算。
@@ -93,4 +95,4 @@ After applying a wallpaper on the development PC, the fixed-time background used
 
 本版按时间切换多张静态图片，不播放视频。暂不直接解析苹果 HEIC 主题，不含主题下载、逐帧太阳角度、独立多屏计划和渐变动画。极昼极夜时仅使用对应的白天或夜间列表；主题失效时保留当前壁纸。压缩包应直接包含 `theme.json` 与图片，不支持嵌套目录或无关文件。
 
-开发电脑上，实际应用壁纸后的固定时间后台工作集约 12.9 MB，自动位置后台约 19.0 MB；之后的 10 秒空闲采样均未测到 CPU 时间增加。设置窗口还会占用预览图片和绘制缓冲所需内存。这是本机样本，不是内存上限，实际占用会随系统、主题和使用状态变化。诊断模式 `--measure` 不执行壁纸应用或定位请求，不能代表完整后台占用。
+开发电脑上的对照测试中，自动位置任务完成后的后台空闲工作集从约 19.6 MB 降到 12.9 MB；两版在 10 秒空闲采样中均未测到 CPU 时间增加。定位临时使用同一 EXE 的第二个进程，本次采样的工作集合计峰值约 25.7 MB，完成后临时进程退出。地名缓存、刷新间隔和失败时的回退行为保留。设置窗口还会占用预览图片和绘制缓冲所需内存。这是本机样本，不是内存上限，实际占用会随系统、主题和使用状态变化。诊断模式 `--measure` 不执行壁纸应用或定位请求，不能代表完整后台占用。

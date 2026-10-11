@@ -17,10 +17,11 @@ inline bool placeFromJson(const char *json,WCHAR out[160])
     else lstrcpynW(out,city,160);
     return true;
 }
+struct PlaceCache { double latitude=1000,longitude=1000; WCHAR name[160]={}; bool chinese=false; };
+static PlaceCache placeCache;
 inline bool reversePlace(double latitude,double longitude,WCHAR out[160],bool useChinese=true)
 {
-    static double cachedLat=1000,cachedLon=1000; static WCHAR cachedName[160]; static bool cachedChinese;
-    if (cachedName[0]&&cachedChinese==useChinese&&std::fabs(latitude-cachedLat)<0.05&&std::fabs(longitude-cachedLon)<0.05) { lstrcpyW(out,cachedName); return true; }
+    if (placeCache.name[0]&&placeCache.chinese==useChinese&&std::fabs(latitude-placeCache.latitude)<0.05&&std::fabs(longitude-placeCache.longitude)<0.05) { lstrcpyW(out,placeCache.name); return true; }
     WCHAR path[256];
     swprintf(path,256,L"/data/reverse-geocode-client?latitude=%.2f&longitude=%.2f&localityLanguage=%ls",latitude,longitude,useChinese?L"zh":L"en");
     HINTERNET session=WinHttpOpen(L"DaylightDesktop/1.0",WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
@@ -40,6 +41,6 @@ inline bool reversePlace(double latitude,double longitude,WCHAR out[160],bool us
     if (request) WinHttpCloseHandle(request);
     if (connection) WinHttpCloseHandle(connection);
     WinHttpCloseHandle(session);
-    if (ok) { cachedLat=latitude; cachedLon=longitude; cachedChinese=useChinese; lstrcpyW(cachedName,out); }
+    if (ok) { placeCache.latitude=latitude; placeCache.longitude=longitude; placeCache.chinese=useChinese; lstrcpyW(placeCache.name,out); }
     return ok;
 }
