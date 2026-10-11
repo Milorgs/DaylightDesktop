@@ -46,7 +46,7 @@ Theme definitions use `imageFilename`, `dayImageList`, `nightImageList`, optiona
 
 This version uses time-varying static frames rather than video. Direct Apple HEIC import, theme downloads, per-frame solar-angle metadata, separate monitor schedules, and crossfade animation are not included yet. At polar latitudes, only the appropriate day or night list progresses over 24 hours. A missing or invalid theme leaves the current wallpaper in place. Archives must contain a flat `theme.json` and image files; nested paths and unrelated files are rejected.
 
-After applying a wallpaper on the development PC, the fixed-time background used about 9.7 MB of working-set memory and automatic location about 18.9 MB. No CPU-time increase was measured during the following 10-second idle samples. Settings use additional memory for previews and drawing buffers. These are local measurements, not a memory limit; usage varies by system, theme, and activity. Diagnostic mode `--measure` excludes wallpaper application and location requests.
+After applying a wallpaper on the development PC, the fixed-time background used about 12.9 MB of working-set memory and automatic location about 19.0 MB. No CPU-time increase was measured during the following 10-second idle samples. Settings use additional memory for previews and drawing buffers. These are local measurements, not a memory limit; usage varies by system, theme, and activity. Diagnostic mode `--measure` excludes wallpaper application and location requests.
 
 ## 中文说明
 
@@ -93,4 +93,4 @@ After applying a wallpaper on the development PC, the fixed-time background used
 
 本版按时间切换多张静态图片，不播放视频。暂不直接解析苹果 HEIC 主题，不含主题下载、逐帧太阳角度、独立多屏计划和渐变动画。极昼极夜时仅使用对应的白天或夜间列表；主题失效时保留当前壁纸。压缩包应直接包含 `theme.json` 与图片，不支持嵌套目录或无关文件。
 
-开发电脑上，实际应用壁纸后的固定时间后台工作集约 9.7 MB，自动位置后台约 18.9 MB；之后的 10 秒空闲采样均未测到 CPU 时间增加。设置窗口还会占用预览图片和绘制缓冲所需内存。这是本机样本，不是内存上限，实际占用会随系统、主题和使用状态变化。诊断模式 `--measure` 不执行壁纸应用或定位请求，不能代表完整后台占用。
+开发电脑上，实际应用壁纸后的固定时间后台工作集约 12.9 MB，自动位置后台约 19.0 MB；之后的 10 秒空闲采样均未测到 CPU 时间增加。设置窗口还会占用预览图片和绘制缓冲所需内存。这是本机样本，不是内存上限，实际占用会随系统、主题和使用状态变化。诊断模式 `--measure` 不执行壁纸应用或定位请求，不能代表完整后台占用。
