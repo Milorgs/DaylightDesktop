@@ -1,0 +1,32 @@
+name: Build Windows
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          mkdir -p dist
+          windres -I src -i src/app.rc -o dist/app.o
+          for source in miniz miniz_zip miniz_tinfl; do
+            gcc -Os -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES -c vendor/miniz/$source.c -o dist/$source.o
+          done
+          g++ -Os -s -std=c++17 -fno-exceptions -fno-rtti -static -static-libstdc++ -static-libgcc -ffunction-sections -fdata-sections -Wl,--gc-sections -Wall -Wextra -Werror -municode -mwindows -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES src/main.cpp src/drawing.cpp dist/app.o dist/miniz.o dist/miniz_zip.o dist/miniz_tinfl.o -o dist/DaylightDesktop.exe -luser32 -lgdi32 -lcomdlg32 -lshell32 -lole32 -luuid -ladvapi32 -ldwmapi -lmsimg32 -lshlwapi -lruntimeobject -lwindowscodecs -lwinhttp -liphlpapi -luxtheme -lcomctl32
+      - name: Self-test
+        shell: pwsh
+        run: |
+          $check = Start-Process "$PWD/dist/DaylightDesktop.exe" -ArgumentList '--self-test' -Wait -PassThru
+          if ($check.ExitCode -ne 0) { throw "Self-test failed: $($check.ExitCode)" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DaylightDesktop-windows-x64
+          path: dist/DaylightDesktop.exe
